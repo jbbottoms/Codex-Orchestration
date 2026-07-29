@@ -115,12 +115,18 @@ def _git(root: Path, arguments: list[str], *, binary: bool = False) -> str | byt
             cwd=root,
             capture_output=True,
             text=not binary,
+            encoding=None if binary else "utf-8",
+            errors=None if binary else "strict",
             check=False,
             timeout=GIT_TIMEOUT_SECONDS,
             shell=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ReleaseCheckError(f"could not run {command!r}: {exc}") from exc
+    except UnicodeError as exc:
+        raise ReleaseCheckError(
+            f"Git command returned non-UTF-8 text: {command!r}"
+        ) from exc
     if result.returncode != 0:
         stderr = result.stderr
         if isinstance(stderr, bytes):

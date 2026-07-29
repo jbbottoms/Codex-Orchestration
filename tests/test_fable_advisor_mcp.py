@@ -636,6 +636,14 @@ class FableAdvisorMcpTests(unittest.TestCase):
             {"outputTokens": True},
             {"": 12},
             {"outputTokens": "12"},
+            {"canonicalModel": FABLE.FABLE_MODEL},
+            {"outputTokens": 12, "canonicalModel": ""},
+            {"outputTokens": 12, "canonicalModel": FABLE.OPUS_MODEL},
+            {"outputTokens": 12, "canonicalModel": 7},
+            {"outputTokens": 12, "provider": ""},
+            {"outputTokens": 12, "provider": "thirdParty"},
+            {"outputTokens": 12, "provider": True},
+            {"outputTokens": 12, "futureIdentity": "unknown"},
         )
         for usage_value in malformed_values:
             with self.subTest(usage_value=usage_value):
@@ -673,6 +681,49 @@ class FableAdvisorMcpTests(unittest.TestCase):
                     model_usage=usage,
                 )
                 self.assertEqual(result["decision"], "PLAN_APPROVED")
+
+    def test_current_claude_model_usage_identity_fields_are_accepted(self) -> None:
+        live_usage = {
+            FABLE.FABLE_MODEL: {
+                "inputTokens": 2,
+                "outputTokens": 522,
+                "cacheReadInputTokens": 6665,
+                "cacheCreationInputTokens": 12776,
+                "webSearchRequests": 0,
+                "costUSD": 0.288305,
+                "contextWindow": 1_000_000,
+                "maxOutputTokens": 64_000,
+                "canonicalModel": FABLE.FABLE_MODEL,
+                "provider": "firstParty",
+            }
+        }
+        result, _ = self.invoke_with_results(
+            FABLE.review_plan,
+            "packet",
+            model_response="PLAN_APPROVED\nNo material gap found.",
+            model_usage=live_usage,
+        )
+        self.assertEqual(result["decision"], "PLAN_APPROVED")
+        self.assertEqual(result["used_models"], [FABLE.FABLE_MODEL])
+
+        helper_usage = {
+            FABLE.FABLE_MODEL: live_usage[FABLE.FABLE_MODEL],
+            FABLE.FABLE_HELPER_MODEL: {
+                "outputTokens": 1,
+                "canonicalModel": FABLE.FABLE_HELPER_MODEL,
+                "provider": "firstParty",
+            },
+        }
+        result, _ = self.invoke_with_results(
+            FABLE.review_plan,
+            "packet",
+            model_response="PLAN_APPROVED\nNo material gap found.",
+            model_usage=helper_usage,
+        )
+        self.assertEqual(
+            result["used_models"],
+            sorted((FABLE.FABLE_MODEL, FABLE.FABLE_HELPER_MODEL)),
+        )
 
     def test_each_operation_pins_its_authorized_seat_effort(self) -> None:
         self.write_state(planner=self.route("low"))

@@ -373,9 +373,10 @@ def _validate_runtime_models(
             f"Runtime metadata reported a model outside the allowed {policy_label} "
             "runtime policy."
         )
-    for model_usage in usage.values():
+    for model, model_usage in usage.items():
         if not isinstance(model_usage, dict) or not model_usage:
             raise AdvisorError("Runtime metadata has a malformed modelUsage value.")
+        has_numeric_metric = False
         for field, value in model_usage.items():
             is_nonnegative_finite_number = (
                 type(value) is int
@@ -384,14 +385,30 @@ def _validate_runtime_models(
                 and math.isfinite(value)
                 and value >= 0
             )
-            if (
-                not isinstance(field, str)
-                or not field.strip()
-                or not is_nonnegative_finite_number
-            ):
+            if not isinstance(field, str) or not field.strip():
                 raise AdvisorError(
                     "Runtime metadata has a malformed modelUsage value."
                 )
+            if field == "canonicalModel":
+                if type(value) is str and value == model:
+                    continue
+                raise AdvisorError(
+                    "Runtime metadata has a malformed modelUsage value."
+                )
+            if field == "provider":
+                if type(value) is str and value == "firstParty":
+                    continue
+                raise AdvisorError(
+                    "Runtime metadata has a malformed modelUsage value."
+                )
+            if is_nonnegative_finite_number:
+                has_numeric_metric = True
+                continue
+            raise AdvisorError(
+                "Runtime metadata has a malformed modelUsage value."
+            )
+        if not has_numeric_metric:
+            raise AdvisorError("Runtime metadata has a malformed modelUsage value.")
     used_models = sorted(raw_models)
     if not set(used_models).intersection(reviewed_primaries):
         raise AdvisorError(

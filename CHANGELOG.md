@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.4 — Unreleased
+
+- Accept Claude Code 2.1.220's sealed `canonicalModel` and `provider` identity
+  fields in first-party `modelUsage` records while preserving exact model and
+  provider validation and rejecting all other string-valued fields.
+- Require every runtime model record to contain at least one nonnegative finite
+  numeric usage metric, so identity-only records cannot establish model use.
+- Isolate hook and preflight subprocesses from repository-local and user-level
+  Git state so synthetic repository tests cannot mutate the calling worktree.
+- Decode Git release metadata as strict UTF-8, preserving non-ASCII changelog
+  headings on Windows instead of using the legacy process code page.
+
 ## 0.9.3 — Unreleased
 
 - Raise the bounded Advisor approval loop from five to eight reviews while

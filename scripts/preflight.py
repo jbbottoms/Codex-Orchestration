@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 from typing import NamedTuple
 
 
@@ -38,12 +39,46 @@ EXTERNAL_PORTABILITY_MODULES = (
     "tests.test_external_registry",
     "tests.test_external_subscription",
 )
+GIT_LOCAL_ENV_VARS = frozenset(
+    {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_CONFIG",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_DIR",
+        "GIT_GRAFT_FILE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_PREFIX",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_SHALLOW_FILE",
+        "GIT_WORK_TREE",
+    }
+)
+GIT_NUMBERED_CONFIG_RE = re.compile(r"GIT_CONFIG_(?:KEY|VALUE)_[0-9]+")
 
 
 class CheckResult(NamedTuple):
     name: str
     status: str
     detail: str = ""
+
+
+def sanitized_subprocess_environment(
+    environment: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Remove repository-local Git state before any preflight child starts."""
+
+    cleaned = dict(os.environ if environment is None else environment)
+    for name in GIT_LOCAL_ENV_VARS:
+        cleaned.pop(name, None)
+    for name in tuple(cleaned):
+        if GIT_NUMBERED_CONFIG_RE.fullmatch(name):
+            cleaned.pop(name, None)
+    return cleaned
 
 
 def _clip(text: str) -> str:
@@ -67,7 +102,7 @@ def run_command(
         completed = subprocess.run(
             arguments,
             cwd=root,
-            env=env,
+            env=sanitized_subprocess_environment(env),
             capture_output=True,
             text=True,
             check=False,
@@ -140,14 +175,32 @@ def unittest_check(
         arguments.extend(["discover", "-s", "tests", "-v"])
     else:
         arguments.extend(["-v", *modules])
-    return run_command(
-        name,
-        arguments,
-        root=root,
-        timeout=timeout,
-        env=env,
-        zero_tests_fail=True,
-    )
+    with tempfile.TemporaryDirectory(
+        prefix="codex-orchestration-preflight-tests-"
+    ) as raw:
+        isolated_home = Path(raw)
+        empty_config = isolated_home / "empty.gitconfig"
+        empty_config.write_text("", encoding="utf-8")
+        test_environment = sanitized_subprocess_environment(env)
+        test_environment.update(
+            {
+                "GIT_CEILING_DIRECTORIES": str(root.resolve().parent),
+                "GIT_CONFIG_GLOBAL": str(empty_config),
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_SYSTEM": str(empty_config),
+                "HOME": str(isolated_home),
+                "USERPROFILE": str(isolated_home),
+                "XDG_CONFIG_HOME": str(isolated_home),
+            }
+        )
+        return run_command(
+            name,
+            arguments,
+            root=root,
+            timeout=timeout,
+            env=test_environment,
+            zero_tests_fail=True,
+        )
 
 
 def release_check(

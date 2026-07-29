@@ -1,2 +1,4 @@
 #!/bin/sh
+# Validate the canonical worktree and index without leaking hook-local Git state.
+unset $(git rev-parse --local-env-vars)
 exec python3 scripts/preflight.py quick

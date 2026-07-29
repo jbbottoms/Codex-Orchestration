@@ -3,8 +3,10 @@ from __future__ import annotations
 from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
 import io
+import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest import mock
 
@@ -28,6 +30,87 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0], ["tool", "literal argument"])
         self.assertIs(run.call_args.kwargs["shell"], False)
         self.assertEqual(run.call_args.kwargs["timeout"], 7)
+
+    def test_command_strips_repository_local_git_environment(self) -> None:
+        completed = subprocess.CompletedProcess(["tool"], 0, "ok", "")
+        inherited = {
+            "PATH": os.environ.get("PATH", ""),
+            "GIT_DIR": "decoy-git-dir",
+            "GIT_INDEX_FILE": "decoy-index",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "user.name",
+            "GIT_CONFIG_VALUE_0": "Injected",
+        }
+        with mock.patch.object(PREFLIGHT.subprocess, "run", return_value=completed) as run:
+            PREFLIGHT.run_command(
+                "example", ["tool"], root=REPO_ROOT, timeout=7, env=inherited
+            )
+        child = run.call_args.kwargs["env"]
+        self.assertEqual(child["PATH"], inherited["PATH"])
+        for name in inherited.keys() - {"PATH"}:
+            self.assertNotIn(name, child)
+
+    def test_synthetic_git_tests_cannot_mutate_an_inherited_decoy_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            decoy = root / "decoy"
+            decoy.mkdir()
+
+            def git(*arguments: str) -> None:
+                subprocess.run(
+                    ["git", *arguments],
+                    cwd=decoy,
+                    capture_output=True,
+                    encoding="utf-8",
+                    check=True,
+                    timeout=10,
+                )
+
+            git("init", "-q")
+            git("config", "user.name", "Decoy Repository")
+            git("config", "user.email", "decoy@example.invalid")
+            marker = decoy / "marker.txt"
+            marker.write_text("unchanged\n", encoding="utf-8")
+            git("add", "marker.txt")
+            git("commit", "-q", "-m", "decoy baseline")
+
+            external_config = root / "external.gitconfig"
+            external_config.write_text("[user]\n\tname = External Decoy\n", encoding="utf-8")
+            protected = (
+                decoy / ".git" / "config",
+                decoy / ".git" / "index",
+                decoy / ".git" / "HEAD",
+                external_config,
+            )
+            before = {path: path.read_bytes() for path in protected}
+            hostile = {
+                "GIT_COMMON_DIR": str(decoy / ".git"),
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_GLOBAL": str(external_config),
+                "GIT_CONFIG_KEY_0": "user.name",
+                "GIT_CONFIG_SYSTEM": str(external_config),
+                "GIT_CONFIG_VALUE_0": "Injected",
+                "GIT_DIR": str(decoy / ".git"),
+                "GIT_INDEX_FILE": str(decoy / ".git" / "index"),
+                "GIT_WORK_TREE": str(decoy),
+                "HOME": str(root / "hostile-home"),
+                "USERPROFILE": str(root / "hostile-profile"),
+            }
+            with mock.patch.dict(PREFLIGHT.os.environ, hostile, clear=False):
+                result = PREFLIGHT.unittest_check(
+                    REPO_ROOT,
+                    "synthetic-isolation",
+                    [
+                        "tests.test_release_check.ReleaseCheckTests."
+                        "test_version_upgrade_passes_and_downgrade_fails"
+                    ],
+                    timeout=60,
+                )
+            self.assertEqual(result.status, "PASS", result.detail)
+            self.assertEqual(
+                {path: path.read_bytes() for path in protected},
+                before,
+            )
 
     def test_missing_subprocess_fails_closed(self) -> None:
         with mock.patch.object(
