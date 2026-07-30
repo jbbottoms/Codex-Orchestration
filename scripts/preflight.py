@@ -278,6 +278,22 @@ def full_local_checks(
     root: Path, *, base_sha: str, head_sha: str | None
 ) -> list[CheckResult]:
     results = quick_checks(root, base_sha=base_sha, head_sha=head_sha)
+    if not sys.platform.startswith("linux"):
+        results.extend(
+            (
+                CheckResult(
+                    "full-tests",
+                    "SKIP",
+                    "required hosted Ubuntu Python 3.11/3.13 test matrix remains authoritative",
+                ),
+                CheckResult(
+                    "lifecycle",
+                    "SKIP",
+                    "required hosted Ubuntu plugin lifecycle gate remains authoritative",
+                ),
+            )
+        )
+        return results
     results.append(unittest_check(root, "full-tests", timeout=900))
     codex = _codex_available(root)
     if codex.status == "FAIL" and "could not start" in codex.detail:

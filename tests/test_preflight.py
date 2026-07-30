@@ -295,6 +295,59 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(len(hosted), 1)
         self.assertEqual(hosted[0].status, "SKIP")
 
+    def test_non_linux_full_is_partial_without_running_ubuntu_only_jobs(self) -> None:
+        quick = [PREFLIGHT.CheckResult("quick", "PASS")]
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(PREFLIGHT.sys, "platform", "win32"),
+            mock.patch.object(PREFLIGHT, "quick_checks", return_value=quick) as quick_run,
+            mock.patch.object(PREFLIGHT, "unittest_check") as unittest_run,
+            mock.patch.object(PREFLIGHT, "_codex_available") as codex_run,
+            mock.patch.object(PREFLIGHT, "run_command") as lifecycle_run,
+        ):
+            results = PREFLIGHT.full_local_checks(
+                REPO_ROOT, base_sha="base", head_sha=None
+            )
+            with redirect_stdout(stdout):
+                code = PREFLIGHT.report(results, ci=False)
+
+        quick_run.assert_called_once_with(
+            REPO_ROOT, base_sha="base", head_sha=None
+        )
+        unittest_run.assert_not_called()
+        codex_run.assert_not_called()
+        lifecycle_run.assert_not_called()
+        skips = {result.name: result for result in results if result.status == "SKIP"}
+        self.assertEqual(set(skips), {"full-tests", "lifecycle"})
+        self.assertIn("hosted Ubuntu", skips["full-tests"].detail)
+        self.assertIn("hosted Ubuntu", skips["lifecycle"].detail)
+        self.assertEqual(code, 0)
+        self.assertIn("PARTIAL", stdout.getvalue())
+
+    def test_linux_full_preserves_test_probe_and_lifecycle_sequence(self) -> None:
+        quick = [PREFLIGHT.CheckResult("quick", "PASS")]
+        full = PREFLIGHT.CheckResult("full-tests", "PASS")
+        codex = PREFLIGHT.CheckResult("codex-available", "PASS")
+        lifecycle = PREFLIGHT.CheckResult("lifecycle", "PASS")
+        with (
+            mock.patch.object(PREFLIGHT.sys, "platform", "linux"),
+            mock.patch.object(PREFLIGHT, "quick_checks", return_value=quick),
+            mock.patch.object(PREFLIGHT, "unittest_check", return_value=full) as unittest_run,
+            mock.patch.object(PREFLIGHT, "_codex_available", return_value=codex) as codex_run,
+            mock.patch.object(PREFLIGHT, "run_command", return_value=lifecycle) as lifecycle_run,
+        ):
+            results = PREFLIGHT.full_local_checks(
+                REPO_ROOT, base_sha="base", head_sha=None
+            )
+
+        unittest_run.assert_called_once_with(REPO_ROOT, "full-tests", timeout=900)
+        codex_run.assert_called_once_with(REPO_ROOT)
+        self.assertEqual(lifecycle_run.call_args.args[0], "lifecycle")
+        self.assertEqual(
+            results,
+            [PREFLIGHT.CheckResult("quick", "PASS"), full, lifecycle],
+        )
+
     def test_ci_skip_fails_closed(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()

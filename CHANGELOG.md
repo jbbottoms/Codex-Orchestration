@@ -11,6 +11,8 @@
   Git state so synthetic repository tests cannot mutate the calling worktree.
 - Decode Git release metadata as strict UTF-8, preserving non-ASCII changelog
   headings on Windows instead of using the legacy process code page.
+- Keep non-Linux local full preflight honest and platform-correct by deferring
+  the Ubuntu-only full-test and lifecycle jobs to their required hosted gates.
 
 ## 0.9.3 — Unreleased
 
